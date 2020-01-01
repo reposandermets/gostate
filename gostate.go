@@ -7,14 +7,15 @@ import (
 
 // ReadState structure type for reading the state
 type ReadState struct {
-	Key    string
-	ChSend chan interface{}
+	Key            string
+	ChReadResponse chan interface{}
 }
 
 // WriteState structure type for reading state
 type WriteState struct {
-	Key  string
-	Data interface{}
+	Key             string
+	Data            interface{}
+	ChWriteResponse chan interface{}
 }
 
 type goState struct{}
@@ -29,11 +30,14 @@ var (
 	GS IGoState
 	// Log ops, defaults false
 	Log bool
+	// CyclePeriod frequency of listen loop
+	CyclePeriod time.Duration
 )
 
 func init() {
 	GS = &goState{}
 	Log = false
+	CyclePeriod = time.Millisecond
 }
 
 // State is core goroutine holding the state structure
@@ -53,17 +57,18 @@ func (gs *goState) State(chWriteState <-chan WriteState, chReadState <-chan Read
 					log.Println("StateHolder RESET")
 				}
 			case rState := <-chReadState:
-				rState.ChSend <- state[rState.Key]
+				rState.ChReadResponse <- state[rState.Key]
 				if Log {
 					log.Println("StateHolder READ")
 				}
 			case wState := <-chWriteState:
 				state[wState.Key] = wState.Data
+				wState.ChWriteResponse <- state[wState.Key]
 				if Log {
 					log.Println("StateHolder Write")
 				}
 			default:
-				time.Sleep(1 * time.Millisecond)
+				time.Sleep(CyclePeriod)
 			}
 		}
 	}()
