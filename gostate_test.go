@@ -1,10 +1,10 @@
 package gostate
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"testing"
-	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -15,26 +15,16 @@ func TestMain(m *testing.M) {
 	os.Exit(exitVal)
 }
 
-func TestQuitState(t *testing.T) {
-	chReadState := make(chan ReadState, 100)
-	chWriteState := make(chan WriteState, 100)
-	chResetState := make(chan bool)
-	chQuitState := make(chan bool)
-	GS.State(chWriteState, chReadState, chResetState, chQuitState)
-	chQuitState <- true
-}
-
-func TestWriteReadStateUnbuffered(t *testing.T) {
+func TestStateDirect(t *testing.T) {
 	log.Println("Test write and read with unbuffered channels")
 
 	Log = true
 
 	chReadState := make(chan ReadState)
 	chWriteState := make(chan WriteState)
-	chResetState := make(chan bool)
 	chQuitState := make(chan bool)
 
-	GS.State(chWriteState, chReadState, chResetState, chQuitState)
+	GS.State(chWriteState, chReadState, chQuitState)
 
 	w := WriteState{
 		Key:             "Foo",
@@ -62,177 +52,110 @@ func TestWriteReadStateUnbuffered(t *testing.T) {
 	chQuitState <- true
 }
 
-func TestWriteReadStateBuffered(t *testing.T) {
-	log.Println("Test write and read with buffered channels")
-
-	Log = true
-
-	chReadState := make(chan ReadState, 100)
-	chWriteState := make(chan WriteState, 100)
-	chResetState := make(chan bool)
-	chQuitState := make(chan bool)
-
-	GS.State(chWriteState, chReadState, chResetState, chQuitState)
-
-	w := WriteState{
-		Key:             "Foo",
-		Data:            "Bar",
-		ChWriteResponse: make(chan interface{}),
+func TestErrorMessages(t *testing.T) {
+	GS.Start()
+	err := GS.Start()
+	if err.Error() != "State already running, nothing to start" {
+		t.Errorf("wanted 'State already running, nothing to start' got:\n%v", err.Error())
 	}
 
-	chWriteState <- w
-	select {
-	case res := <-w.ChWriteResponse:
-		if res != "Bar" {
-			t.Errorf("wanted 'Bar' got:\n%v", res)
-		}
-	}
-	r := ReadState{
-		Key:            "Foo",
-		ChReadResponse: make(chan interface{}),
-	}
-	chReadState <- r
-
-	waitFlag := true
-	for waitFlag {
-		select {
-		case res := <-r.ChReadResponse:
-			waitFlag = false
-			if res != "Bar" {
-				t.Errorf("wanted 'Bar' got:\n%v", res)
-			}
-
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	resWrite, _ := GS.Write("foo", "bar")
+	if resWrite != "bar" {
+		t.Errorf("wanted 'bar' got:\n%v", resWrite)
 	}
 
-	chQuitState <- true
+	resRead, _ := GS.Read("foo")
+	if resRead != "bar" {
+		t.Errorf("wanted 'bar' got:\n%v", resRead)
+	}
+
+	GS.Stop()
+	err = GS.Stop()
+	if err.Error() != "State not running, nothing to stop" {
+		t.Errorf("wanted 'State not running, nothing to stop' got:\n%v", err.Error())
+	}
+
+	_, err = GS.Write("foo", "bar")
+	if err.Error() != "State not running, no write" {
+		t.Errorf("wanted 'State not running, no write' got:\n%v", err.Error())
+	}
+
+	_, err = GS.Read("foo")
+	if err.Error() != "State not running, no read" {
+		t.Errorf("wanted 'State not running, no read' got:\n%v", err.Error())
+	}
+
+	err = GS.Restart()
+	if err.Error() != "State not running, nothing to restart" {
+		t.Errorf("wanted 'State not running, nothing to restart' got:\n%v", err.Error())
+	}
+
+	GS.Start()
+	resWrite, _ = GS.Write("foo", "bar")
+	if resWrite != "bar" {
+		t.Errorf("wanted 'bar' got:\n%v", resWrite)
+	}
+
+	err = GS.Restart()
+	if err != nil {
+		t.Errorf("wanted err='nil' got:\n%v", err.Error())
+	}
+	resRead, _ = GS.Read("foo")
+	if resRead != nil {
+		t.Errorf("wanted resRead=nil got:\n%v", resRead)
+	}
+	GS.Stop()
 }
 
-func TestWriteReadStateBufferedOrder(t *testing.T) {
-	log.Println("Test the order of writes")
+func TestUsage(t *testing.T) {
+	GS.Start()
 
-	Log = true
-
-	chReadState := make(chan ReadState, 100)
-	chWriteState := make(chan WriteState, 100)
-	chResetState := make(chan bool)
-	chQuitState := make(chan bool)
-
-	GS.State(chWriteState, chReadState, chResetState, chQuitState)
-
-	w1 := WriteState{
-		Key:             "Foo",
-		Data:            "Bar1",
-		ChWriteResponse: make(chan interface{}),
-	}
-	w2 := WriteState{
-		Key:             "Foo",
-		Data:            "Bar2",
-		ChWriteResponse: make(chan interface{}),
-	}
-	w3 := WriteState{
-		Key:             "Foo",
-		Data:            "Bar3",
-		ChWriteResponse: make(chan interface{}),
+	type person struct {
+		name string
+		age  int
 	}
 
-	r := ReadState{
-		Key:            "Foo",
-		ChReadResponse: make(chan interface{}, 1),
-	}
-	chWriteState <- w1
-	select {
-	case res := <-w1.ChWriteResponse:
-		if res != "Bar1" {
-			t.Errorf("wanted 'Bar1' got:\n%v", res)
-		}
-	}
-	chWriteState <- w2
-	select {
-	case res := <-w2.ChWriteResponse:
-		if res != "Bar2" {
-			t.Errorf("wanted 'Bar2' got:\n%v", res)
-		}
-	}
-	chWriteState <- w3
-	select {
-	case res := <-w3.ChWriteResponse:
-		if res != "Bar3" {
-			t.Errorf("wanted 'Bar3' got:\n%v", res)
-		}
-	}
-	chReadState <- r
-
-	waitFlag := true
-
-	for waitFlag {
-		select {
-		case res := <-r.ChReadResponse:
-			waitFlag = false
-
-			if res != "Bar3" {
-				t.Errorf("wanted 'Bar3' got:\n%v", res)
-			}
-
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	// by reference, danger
+	person1 := person{name: "foo", age: 99}
+	GS.Write("personByRef", &person1)
+	person1 = person{}
+	resRead, _ := GS.Read("personByRef")
+	fmt.Println(resRead.(*person).name) // outputs: ""
+	if resRead.(*person).name != "" {
+		t.Errorf("wanted '' got:\n%v", resRead)
 	}
 
-	chQuitState <- true
-}
-
-func TestResetState(t *testing.T) {
-	log.Println("Test the order of writes")
-
-	Log = true
-
-	chReadState := make(chan ReadState, 100)
-	chWriteState := make(chan WriteState, 100)
-	chResetState := make(chan bool)
-	chQuitState := make(chan bool)
-
-	GS.State(chWriteState, chReadState, chResetState, chQuitState)
-
-	w1 := WriteState{
-		Key:             "Foo",
-		Data:            "Bar1",
-		ChWriteResponse: make(chan interface{}),
+	// by value, safe
+	person2 := person{name: "baz", age: 33}
+	GS.Write("personByVal", person2)
+	person2 = person{}
+	resRead, _ = GS.Read("personByVal")
+	fmt.Println(resRead.(person).name) // outputs: baz
+	if resRead.(person).name != "baz" {
+		t.Errorf("wanted baz got:\n%v", resRead)
 	}
 
-	r := ReadState{
-		Key:            "Foo",
-		ChReadResponse: make(chan interface{}, 1),
-	}
-	chWriteState <- w1
-	select {
-	case res := <-w1.ChWriteResponse:
-		if res != "Bar1" {
-			t.Errorf("wanted 'Bar1' got:\n%v", res)
-		}
-	}
+	person3 := person{name: "One", age: 53}
+	person4 := person{name: "Two", age: 51}
+	persons := make([]person, 0)
+	persons = append(persons, person3)
+	persons = append(persons, person4)
 
-	chResetState <- true
-
-	chReadState <- r
-
-	waitFlag := true
-
-	for waitFlag {
-		select {
-		case res := <-r.ChReadResponse:
-			waitFlag = false
-
-			if res != nil {
-				t.Errorf("wanted 'nil' got:\n%v", res)
-			}
-
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	GS.Write("personsByVal", persons)
+	resRead, _ = GS.Read("personsByVal")
+	fmt.Println(resRead.([]person)[0].name) // outputs: One
+	if resRead.([]person)[0].name != "One" {
+		t.Errorf("wanted One got:\n%v", resRead.([]person)[0].name)
 	}
 
-	chQuitState <- true
+	m := make(map[string][]person)
+	m["data"] = persons
+	GS.Write("personsMap", m)
+	resRead, _ = GS.Read("personsMap")
+	fmt.Println(resRead.(map[string][]person)["data"][0].name) // outputs: One
+	if resRead.(map[string][]person)["data"][0].name != "One" {
+		t.Errorf("wanted One got:\n%v", resRead.(map[string][]person)["data"][0].name)
+	}
+
+	GS.Stop() // graceful shutdown
 }
